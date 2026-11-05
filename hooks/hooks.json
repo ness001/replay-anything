@@ -1,0 +1,28 @@
+{
+  "description": "Replay-Anything: note saved recipes before playwright-cli / agent-browser commands, and auto-save new ones (replay-anything auto off to disable)",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {"type": "command", "command": "python", "args": ["${CLAUDE_PLUGIN_ROOT}/launch.py", "cli", "hook"], "timeout": 20}
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {"type": "command", "command": "python", "args": ["${CLAUDE_PLUGIN_ROOT}/launch.py", "cli", "hook"], "timeout": 20}
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {"type": "command", "command": "python", "args": ["${CLAUDE_PLUGIN_ROOT}/launch.py", "cli", "hook"], "timeout": 20}
+        ]
+      }
+    ]
+  }
+}

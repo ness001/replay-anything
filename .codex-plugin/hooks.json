@@ -1,0 +1,40 @@
+{
+  "description": "Codex copy of hooks/hooks.json (Codex hooks take one command string, not command + args)",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${PLUGIN_ROOT}/launch.py\" cli hook --target codex",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${PLUGIN_ROOT}/launch.py\" cli hook --target codex",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${PLUGIN_ROOT}/launch.py\" cli hook --target codex",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

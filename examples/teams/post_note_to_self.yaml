@@ -1,0 +1,19 @@
+name: post_note_to_self
+description: Post a text message to your own Microsoft Teams "Note to self" chat (private, only you see it).
+notes: Browser steps only; Teams signs its API calls with tokens kept in the browser, so request replay does not work. Needs a persistent-profile login (replay-anything login https://teams.microsoft.com).
+site: https://teams.microsoft.com
+auth: session
+inputs:
+  text: {type: string}
+steps:
+  - id: post
+    browser:
+      - goto: https://teams.cloud.microsoft/v2/
+      - wait_for: {selector: "[data-tid='ckeditor']", timeout: 60000}
+      - goto: https://teams.cloud.microsoft/v2/#/l/chat/48:notes/conversations
+      - wait_for: {text: "(You)", timeout: 30000}
+      - fill:  {selector: "[data-tid='ckeditor']", value: "{{inputs.text}}"}
+      - click: {selector: "button[name=send]"}
+      - wait_for: {selector: "[data-tid='chat-pane-message']", has_text: "{{inputs.text}}", timeout: 30000}
+      - extract: {posted_text: "[data-tid='chat-pane-message']"}
+output: {posted_text: "{{post.posted_text}}"}

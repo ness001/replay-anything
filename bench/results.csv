@@ -1,0 +1,34 @@
+row,run,status,seconds,tokens,input,output,cache_read,cache_write,api_calls
+playwright-cli 1st run,1,ok,90,340053,199063,1562,139428,0,10
+playwright-cli 1st run,2,ok,74,425791,166659,1210,257922,0,7
+playwright-cli 1st run,3,ok,71,423452,121591,952,300909,0,7
+"playwright-cli same session, same request",1,ok,40,187490,88356,927,98207,0,5
+"playwright-cli same session, same request",2,ok,30,252497,60643,704,191150,0,4
+"playwright-cli same session, same request",3,failed,,,,,,,
+playwright-cli record and replay,1,ok,44,259006,65730,968,192308,0,4
+playwright-cli record and replay,2,ok,38,261957,67944,726,193287,0,4
+playwright-cli record and replay,3,failed,,,,,,,
+playwright-cli agent-written skill,1,ok,69,363088,104202,964,257922,0,6
+playwright-cli agent-written skill,2,ok,68,363456,104539,995,257922,0,6
+playwright-cli agent-written skill,3,ok,68,363096,104259,915,257922,0,6
+playwright-cli recipe (run_recipe),1,ok,21,175950,46713,276,128961,0,3
+playwright-cli recipe (run_recipe),2,ok,22,175826,46567,298,128961,0,3
+playwright-cli recipe (run_recipe),3,ok,22,175806,46583,262,128961,0,3
+agent-browser 1st run,1,ok,107,426533,167313,1298,257922,0,7
+agent-browser 1st run,2,ok,91,365086,106000,1164,257922,0,6
+agent-browser 1st run,3,ok,89,379485,120558,1005,257922,0,6
+"agent-browser same session, same request",1,ok,73,318342,83063,977,234302,0,5
+"agent-browser same session, same request",2,ok,69,316176,81172,1101,233903,0,5
+"agent-browser same session, same request",3,ok,70,333381,94873,1186,237322,0,5
+agent-browser record and replay,1,failed,,,,,,,
+agent-browser record and replay,2,failed,,,,,,,
+agent-browser record and replay,3,failed,,,,,,,
+agent-browser agent-written skill,1,ok,100,365038,105854,1262,257922,0,6
+agent-browser agent-written skill,2,ok,99,364704,105615,1167,257922,0,6
+agent-browser agent-written skill,3,ok,92,364684,105596,1166,257922,0,6
+agent-browser recipe (run_recipe),1,ok,22,176054,46827,266,128961,0,3
+agent-browser recipe (run_recipe),2,ok,21,175995,46787,247,128961,0,3
+agent-browser recipe (run_recipe),3,ok,23,176025,46803,261,128961,0,3
+replay-anything CLI (no agent),1,ok,21.2,0,0,0,0,0,0
+replay-anything CLI (no agent),2,ok,19.1,0,0,0,0,0,0
+replay-anything CLI (no agent),3,ok,18.0,0,0,0,0,0,0

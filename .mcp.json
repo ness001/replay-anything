@@ -1,0 +1,7 @@
+{
+  "replay-anything": {
+    "type": "stdio",
+    "command": "python",
+    "args": ["${CLAUDE_PLUGIN_ROOT}/launch.py", "mcp"]
+  }
+}

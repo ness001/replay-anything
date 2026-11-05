@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "replay-anything": {
+      "command": "python",
+      "args": ["./launch.py", "mcp"],
+      "cwd": ".",
+      "startup_timeout_sec": 300
+    }
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "description": "Copilot CLI hooks for Replay-Anything (Claude Code uses hooks/hooks.json, Codex .codex-plugin/hooks.json)",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "exec": "python",
+            "args": [
+              "${PLUGIN_ROOT}/launch.py",
+              "cli",
+              "hook",
+              "--target",
+              "copilot"
+            ],
+            "timeoutSec": 20
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "exec": "python",
+            "args": [
+              "${PLUGIN_ROOT}/launch.py",
+              "cli",
+              "hook",
+              "--target",
+              "copilot"
+            ],
+            "timeoutSec": 20
+          }
+        ]
+      }
+    ]
+  }
+}

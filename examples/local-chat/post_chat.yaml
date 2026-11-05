@@ -1,0 +1,34 @@
+name: post_chat
+description: Post a message with an optional image to a channel on the local test chat.
+site: http://127.0.0.1:18765
+auth: session
+inputs:
+  channel: {type: string}
+  text:    {type: string}
+  image:   {type: file, optional: true}
+steps:
+  - id: token
+    request: GET /api/session
+    extract: {csrf: $.csrfToken}
+  - id: upload
+    when: inputs.image
+    request: POST /api/uploads
+    headers: {X-CSRF-Token: "{{token.csrf}}"}
+    multipart: {file: "{{inputs.image}}"}
+    extract: {file_id: $.id}
+  - id: send
+    request: POST /api/channels/{{inputs.channel}}/messages
+    headers: {X-CSRF-Token: "{{token.csrf}}"}
+    json: {text: "{{inputs.text}}", attachments: ["{{upload.file_id}}"]}
+    expect: {status: 201}
+    extract: {message_id: $.id, url: $.permalink}
+output: {message_id: "{{send.message_id}}", url: "{{send.url}}"}
+fallback:
+  browser:
+    - goto: /c/{{inputs.channel}}
+    - fill:   {selector: "textarea[aria-label='Message']", value: "{{inputs.text}}"}
+    - upload: {selector: "input[type=file]", file: "{{inputs.image}}"}
+    - click:  {selector: "button[aria-label='Send']"}
+    - wait_for: {text: "{{inputs.text}}"}
+    - extract: {message_id: {selector: "li.msg", attr: id}}
+  output: {message_id: "{{browser.message_id}}"}

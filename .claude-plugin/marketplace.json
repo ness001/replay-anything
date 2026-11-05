@@ -1,0 +1,15 @@
+{
+  "name": "replay-anything",
+  "owner": {
+    "name": "ness001",
+    "url": "https://github.com/ness001"
+  },
+  "plugins": [
+    {
+      "name": "replay-anything",
+      "source": "./",
+      "description": "Build and run named website recipes (skill + MCP server). v1: websites only."
+    }
+  ],
+  "description": "Replay-Anything: turn repeated website operations into recipes agents run in one step."
+}

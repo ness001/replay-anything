@@ -1,0 +1,14 @@
+name: post_chat_ws
+description: Post a message to a channel on the local test chat over its live WebSocket.
+site: http://127.0.0.1:18765
+auth: session
+inputs:
+  channel: {type: string}
+  text:    {type: string}
+steps:
+  - id: post
+    websocket: /ws
+    send: {type: post, channel: "{{inputs.channel}}", text: "{{inputs.text}}"}
+    receive: {match: {$.type: posted}, timeout: 10}
+    extract: {message_id: $.id, url: $.permalink}
+output: {message_id: "{{post.message_id}}", url: "{{post.url}}"}
