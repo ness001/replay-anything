@@ -5,6 +5,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-06
+
 ### Added
 - Recipe options for sites with bot protection: `transport: browser` sends request steps with fetch() from
   a real page on the site, `headed: true` opens a visible window, `pacing: human` waits 0.5-2 s between
@@ -14,6 +16,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
   instead of about 70 s with one run per page (2026-11-06).
 
 ### Changed
+- Document how to install the standalone CLI and reload the Claude Code plugin after an update.
+- Initialize the plugin environment in the Stop hook test so CI passes on a clean checkout.
 - All browser steps in a run share one browser page instead of launching a browser per step, so a step
   starts where the previous one ended (start it with `goto` for a fresh page). `via` is `browser` whenever
   the run opened a browser.
