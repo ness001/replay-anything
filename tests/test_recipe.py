@@ -141,8 +141,14 @@ def test_quoted_input_warning_edge_cases():
 
 
 def _fe(steps):
-    return {"name": "x", "description": "d", "site": "https://a.example", "inputs": {"ids": {"type": "array"}},
-            "steps": steps, "output": {"r": "{{last}}"}}
+    return {
+        "name": "x",
+        "description": "d",
+        "site": "https://a.example",
+        "inputs": {"ids": {"type": "array"}},
+        "steps": steps,
+        "output": {"r": "{{last}}"},
+    }
 
 
 def test_for_each_validation():

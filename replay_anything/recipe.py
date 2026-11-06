@@ -119,7 +119,8 @@ def parse(data: Any, path: Path | None = None) -> Recipe:
                 _fail(sw, "for_each works only on browser steps")
             _check_refs(step["for_each"], known, sw)
         # {{item}} is the current for_each item, defined only inside that step
-        _check_refs({k: v for k, v in step.items() if k != "for_each"}, known | ({"item"} if "for_each" in step else set()), sw)
+        in_step = known | ({"item"} if "for_each" in step else set())
+        _check_refs({k: v for k, v in step.items() if k != "for_each"}, in_step, sw)
         if "when" in step and not isinstance(step["when"], bool):
             bare = re.sub(r"^\s*not\s+", "", str(step["when"]))
             bare = re.split(r"\s*(?:==|!=)\s*", bare)[0].strip()

@@ -806,8 +806,10 @@ def test_for_each_reads_several_pages_in_one_browser(site, tmp_path):
                                 "goto": {
                                     "url": "/spa/{{item}}",
                                     "timeout": 5000,
-                                    "wait_response": {"url": "/api/channels/{{item}}/messages",
-                                                      "extract": {"msgs": "$.messages"}},
+                                    "wait_response": {
+                                        "url": "/api/channels/{{item}}/messages",
+                                        "extract": {"msgs": "$.messages"},
+                                    },
                                 }
                             }
                         ],
