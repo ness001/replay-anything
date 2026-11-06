@@ -1,7 +1,7 @@
 {
   "name": "replay-anything",
   "description": "Turn repeated website operations into named, verified recipes that agents run in one step (skill to build, MCP server to run). v1: websites only.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": {
     "name": "ness001",
     "url": "https://github.com/ness001"
