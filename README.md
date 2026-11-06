@@ -22,9 +22,11 @@ See the [benchmark](#benchmark) for measured results.
 claude plugin install replay-anything --marketplace https://github.com/ness001/replay-anything
 ```
 
-Restart Claude Code, then ask: *"Make a recipe to post a message to my team chat."* The agent signs you in
-once, watches you do it, and saves a recipe. Next time, *"post 'build is green' to my team chat"* runs in
-one step. Codex and GitHub Copilot are covered in [Install](#1-install).
+Reload the plugin with `/reload-plugins` (or start a new Claude Code session), then ask: *"Make a recipe
+to post a message to my team chat."* The agent signs you in once, watches you do it, and saves a recipe.
+Next time, *"post 'build is green' to my team chat"* runs in one step. The plugin does not add the
+`replay-anything` CLI to your shell's `PATH`; see [CLI installation](#cli-installation) if you want to run
+it yourself. Codex and GitHub Copilot are covered in [Install](#1-install).
 
 ## Parts
 
@@ -48,7 +50,9 @@ reference in the skill.
 
 Pick one per agent. Each one installs the skill, the MCP server, the browser hooks and auto-save.
 The only requirement is Python 3.11+ on `PATH`. On first start the plugin sets up its own `.venv`, which takes
-about a minute. Then restart the agent.
+about a minute. In Claude Code, `/reload-plugins` activates installed or updated hooks, skills, and MCP servers
+in an interactive session; a new session also works. Auto-save is on by default and records subsequent browser
+work, not browser calls made before the plugin was loaded.
 
 **Claude Code**
 ```bash
@@ -73,12 +77,26 @@ copilot plugin install replay-anything@replay-anything
 
 | Agent | Steps |
 |---|---|
-| Claude Code | `claude plugin update replay-anything@replay-anything`, then restart Claude Code so the MCP server restarts. Without a new version number, `update` changes nothing. |
+| Claude Code | `claude plugin update replay-anything@replay-anything`, then `/reload-plugins` (or start a new session). Without a new version number, `update` changes nothing. |
 | Codex | Run `codex plugin remove` and then `add`. Codex keeps a copy of the plugin. |
 | Copilot | Nothing to do. It loads a local folder live. |
 
 Older Codex/Copilot versions without plugin support can use `python install.py --rules`. It installs the
 MCP server, the skill and a short rule, but no hooks.
+
+#### CLI installation
+
+Plugin installation does not place `replay-anything` on your shell's `PATH`. To run the CLI directly,
+install the Python package separately (Python 3.11+):
+
+```bash
+uv tool install 'git+https://github.com/ness001/replay-anything.git'
+replay-anything auto status
+```
+
+If `uv` is not available, use `pipx install git+https://github.com/ness001/replay-anything.git` instead.
+For a source checkout, `python launch.py cli auto status` runs the CLI without a separate installation.
+The CLI and plugin use the same per-user recipe and session folders.
 
 ### 2. Make a recipe (once per operation)
 

@@ -10,8 +10,12 @@ A recipe is a small YAML file that replays one named website operation with new 
 
 Before building, call `list_recipes` (or `replay-anything list`): a recipe may already exist.
 
-The CLI is `replay-anything` (inside the plugin's venv; `python -m replay_anything.cli` also works).
-`replay-anything where` prints the recipe and session folders.
+The plugin does not add `replay-anything` to `PATH`. Use `python launch.py cli <command>` from a
+source checkout, or install the CLI separately (`uv tool install
+'git+https://github.com/ness001/replay-anything.git'`). When using the plugin, replace
+`replay-anything <command>` in the examples below with
+`python "${CLAUDE_PLUGIN_ROOT}/launch.py" cli <command>`; expand the plugin root to its installed
+folder if the shell does not have `CLAUDE_PLUGIN_ROOT` set. `where` prints the recipe and session folders.
 
 ## 1. Agree on the operation
 

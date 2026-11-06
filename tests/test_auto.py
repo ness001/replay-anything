@@ -107,6 +107,16 @@ def test_stop_through_plugin_config(home):
     args = [a.replace("${CLAUDE_PLUGIN_ROOT}", str(ROOT)) for a in cfg["Stop"][0]["hooks"][0]["args"]]
     env = {k: v for k, v in os.environ.items() if k != auto.ENV}
 
+    # The MCP server creates the venv before a plugin hook needs it.
+    boot = subprocess.run(
+        [sys.executable, str(ROOT / "launch.py"), "cli", "auto", "status"],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+    )
+    assert boot.returncode == 0, boot.stderr
+
     def run(ev):
         return subprocess.run(
             [sys.executable, *args], input=json.dumps(ev), capture_output=True, text=True, env=env, timeout=120
