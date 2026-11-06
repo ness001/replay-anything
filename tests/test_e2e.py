@@ -780,3 +780,49 @@ def test_wait_for_gone_reports_a_bad_selector(site, tmp_path):
         with pytest.raises(ActionFailed):
             run_actions(page, [{"wait_for": {"selector": "p[[[", "gone": True, "appear": 300}}], SITE, lambda v: v)
         b.close()
+
+
+@pytest.mark.browser
+def test_for_each_reads_several_pages_in_one_browser(site, tmp_path):
+    """for_each repeats a browser step's actions per item in one browser; a failed item is recorded, the rest go on."""
+    import yaml
+
+    save_login()
+    p = tmp_path / "fe.yaml"
+    p.write_text(
+        yaml.safe_dump(
+            {
+                "name": "fe",
+                "description": "d",
+                "site": SITE,
+                "auth": "session",
+                "inputs": {"channels": {"type": "array"}},
+                "steps": [
+                    {
+                        "id": "load",
+                        "for_each": "{{inputs.channels}}",
+                        "browser": [
+                            {
+                                "goto": {
+                                    "url": "/spa/{{item}}",
+                                    "timeout": 5000,
+                                    "wait_response": {"url": "/api/channels/{{item}}/messages",
+                                                      "extract": {"msgs": "$.messages"}},
+                                }
+                            }
+                        ],
+                    }
+                ],
+                "output": {"results": "{{load}}"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert recipes.load_file(p).id  # valid
+    r = api.run_recipe(str(p), {"channels": ["general", "random", "no such/../x"]}, allow_path=True)
+    assert r["ok"], r
+    res = r["output"]["results"]
+    assert [x["item"] for x in res] == ["general", "random", "no such/../x"]
+    assert res[0]["ok"] and isinstance(res[0]["msgs"], list)
+    assert res[1]["ok"] and isinstance(res[1]["msgs"], list)
+    assert res[2]["ok"] is False and res[2]["error"] and res[2].get("saved")  # screenshot path kept per item

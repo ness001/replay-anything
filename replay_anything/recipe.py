@@ -99,7 +99,7 @@ def parse(data: Any, path: Path | None = None) -> Recipe:
         if not isinstance(step, dict) or not step.get("id"):
             _fail(sw, "each step needs an 'id'")
         sid = step["id"]
-        if sid in known or sid in ("session", "env"):
+        if sid in known or sid in ("session", "env", "item"):
             _fail(sw, f"duplicate or reserved step id '{sid}'")
         kinds = [k for k in STEP_KINDS if k in step]
         if len(kinds) != 1:
@@ -114,7 +114,12 @@ def parse(data: Any, path: Path | None = None) -> Recipe:
                 _fail(sw, f"use only one body field, got {bodies}")
         elif kind == "browser":
             _check_actions(step["browser"], sw)
-        _check_refs(step, known, sw)
+        if "for_each" in step:
+            if kind != "browser":
+                _fail(sw, "for_each works only on browser steps")
+            _check_refs(step["for_each"], known, sw)
+        # {{item}} is the current for_each item, defined only inside that step
+        _check_refs({k: v for k, v in step.items() if k != "for_each"}, known | ({"item"} if "for_each" in step else set()), sw)
         if "when" in step and not isinstance(step["when"], bool):
             bare = re.sub(r"^\s*not\s+", "", str(step["when"]))
             bare = re.split(r"\s*(?:==|!=)\s*", bare)[0].strip()

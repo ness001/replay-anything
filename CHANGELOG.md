@@ -9,6 +9,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - Recipe options for sites with bot protection: `transport: browser` sends request steps with fetch() from
   a real page on the site, `headed: true` opens a visible window, `pacing: human` waits 0.5-2 s between
   steps and actions. No stealth features: automation is not hidden.
+- Browser steps accept `for_each`: run the same actions once per list item in the run's browser page,
+  with `{{item}}` set, returning one result per item. Reading 8 IcM incident pages took about 26 s
+  instead of about 70 s with one run per page (2026-11-06).
 
 ### Changed
 - All browser steps in a run share one browser page instead of launching a browser per step, so a step

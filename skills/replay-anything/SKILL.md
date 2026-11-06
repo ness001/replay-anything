@@ -122,7 +122,12 @@ fallback:
 Reference:
 - Step types: `request: METHOD /path` (body: one of `json`, `form`, `multipart`, `body`; plus
   `headers`, `query`), `websocket: /path` (`send`, `receive: {match: {$.type: posted}, timeout: 10}`,
-  `extract`), `browser: [actions]`.
+  `extract`), `browser: [actions]`. A browser step may set `for_each: "{{inputs.ids}}"` (a list):
+  its actions run once per item in the same browser, with `{{item}}` set, and the step's value is a
+  list of `{item, ok, ...extracted}` or `{item, ok: false, error}` (a failed item doesn't stop the
+  rest; failed items keep their screenshot path in `saved`). Items share one page, so start the
+  actions with a `goto` (a failed item can leave a dialog open). `item` is reserved as a step id.
+  Use it to read many pages with one sign-in instead of one run per page.
 - Browser actions: `goto` (or `{url, wait_response}` to read JSON the page loads itself, e.g. an API
   called with a token kept in the page), `fill`, `paste_html {selector, html | file}` (rich editors keep
   tables/links), `click` (`wait_response: {url, status, extract: {name: $.path}}` waits until the site accepted it and reads ids from its reply), `press

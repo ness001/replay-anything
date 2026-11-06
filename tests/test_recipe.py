@@ -138,3 +138,19 @@ def test_quoted_input_warning_edge_cases():
     assert recipes.warnings(recipe({"extract": {"m": {"selector": "li[title='{{inputs.text}}']"}}}))
     assert recipes.warnings(recipe({"wait_for": {"selector": 'li:has-text("it\'s {{inputs.text}}")'}}))
     assert not recipes.warnings(recipe({"click": "li:has-text('a') >> nth={{inputs.text}} >> text='b'"}))
+
+
+def _fe(steps):
+    return {"name": "x", "description": "d", "site": "https://a.example", "inputs": {"ids": {"type": "array"}},
+            "steps": steps, "output": {"r": "{{last}}"}}
+
+
+def test_for_each_validation():
+    ok = [{"id": "last", "for_each": "{{inputs.ids}}", "browser": [{"goto": "/p/{{item}}"}]}]
+    recipes.parse(_fe(ok), "t")
+    with pytest.raises(RecipeInvalid, match="reserved"):  # {{item}} would clash with a step called item
+        recipes.parse(_fe([{"id": "item", "request": "GET /x"}] + ok), "t")
+    with pytest.raises(RecipeInvalid, match="only on browser steps"):
+        recipes.parse(_fe([{"id": "last", "for_each": "{{inputs.ids}}", "request": "GET /x"}]), "t")
+    with pytest.raises(RecipeInvalid, match="'item'"):  # {{item}} outside a for_each step
+        recipes.parse(_fe([{"id": "last", "browser": [{"goto": "/p/{{item}}"}]}]), "t")

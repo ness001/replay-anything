@@ -199,7 +199,13 @@ def _run_steps(recipe: Recipe, inputs: dict, state: dict | None, timeout: float,
                 elif "websocket" in step:
                     scope[sid] = _websocket(step, scope, client, recipe, timeout)
                 else:
-                    scope[sid] = page.actions(step["browser"], scope, dry_run)
+                    if "for_each" in step:
+                        items = render(step["for_each"], scope)
+                        if not isinstance(items, list):
+                            raise StepFailed(sid, f"for_each needs a list, got {type(items).__name__}")
+                        scope[sid] = page.each(items, step["browser"], scope, dry_run)
+                    else:
+                        scope[sid] = page.actions(step["browser"], scope, dry_run)
             except (ReplayError, DryRunStop):
                 raise
             except TemplateError as e:
@@ -512,6 +518,30 @@ class _Page:
             raise
         self._check_login()
         return out
+
+    def each(self, items: list, actions: list[dict], scope: dict, dry_run: bool = False) -> list[dict]:
+        """for_each: run the actions once per item in this page, with {{item}} set. Returns
+        [{...extracted, item, ok: True} | {item, ok: False, error, saved}]; a failed item doesn't stop the rest.
+        A login page, a dry-run stop or a template error (a recipe mistake) stops the step."""
+        from .browser import DryRunStop
+
+        if not items:  # nothing to do: don't start a browser
+            return []
+        results = []
+        try:
+            for item in items:
+                scope["item"] = item
+                try:
+                    got = self.actions(actions, scope, dry_run)
+                except (DryRunStop, TemplateError, SessionExpired):
+                    raise
+                except Exception as e:
+                    results.append({"item": item, "ok": False, "error": _short(e), "saved": getattr(e, "saved", None)})
+                    continue
+                results.append({**got, "item": item, "ok": True})  # bookkeeping fields win over extracts
+        finally:
+            scope.pop("item", None)
+        return results
 
     def fetch(self, method: str, url: str, *, timeout: float, **kw: Any) -> _FetchResponse:
         """Takes the httpx client.request arguments _request uses (headers, params, json, data, content,
