@@ -250,6 +250,7 @@ def run_actions(
     default_timeout: int = 15000,
     on_navigate=None,
     dry_run: bool = False,
+    pause=None,
 ) -> dict:
     """Run browser actions. `render` resolves placeholders. Returns values from `extract` actions.
 
@@ -257,12 +258,17 @@ def run_actions(
     changes the site: with `dry_run` the run stops just before it (DryRunStop). A goto with
     `wait_response` reads a response the page loads itself (read-only).
     `on_navigate()` is checked after each goto; returning True stops with LoggedOut.
+    `pause()`, if given, runs between actions (recipe `pacing`).
     Any other failure is raised as ActionFailed naming the action, with a screenshot saved."""
     out: dict[str, Any] = {}
+    acted = False
     for index, action in enumerate(actions, 1):
         ((verb, arg),) = ((k, v) for k, v in action.items() if k not in ("when", "submits"))
         if "when" in action and not render(("__when__", action["when"])):
             continue
+        if pause and acted:
+            pause()
+        acted = True
         arg = render(arg)
         if dry_run and changes_site(verb, action, arg):
             raise DryRunStop(f"action {index} ({verb} {_target(arg)})")

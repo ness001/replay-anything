@@ -84,6 +84,9 @@ description: Post a message with an optional image to a channel.   # first line 
 site: https://chat.example.com
 auth: session            # or none
 notes: Built from a recording on 2026-11-03; send is replayed as a request.   # optional: how built, limits
+# transport: browser   # optional: send request steps with fetch() from a real page (bot-protected sites)
+# headed: true         # optional: visible window instead of headless
+# pacing: human        # optional: random 0.5-2 s between steps and actions
 inputs:
   channel: {type: string}
   text:    {type: string}
@@ -144,6 +147,10 @@ Reference:
 - Write `notes:` saying how the recipe was built (recording or hand-written, date, why a browser
   step) and known limits, so a later reader can tell.
 - Add a `fallback` when the UI is stable enough; it runs only if request replay fails.
+- If the recording shows bot-defense cookies or scripts (`_abck`, `_px*`, `cf_clearance`, `datadome`),
+  or replayed requests get 403 while the browser works, set `transport: browser`; add `headed: true` if
+  headless is still refused. Never add stealth tricks (faking `navigator.webdriver`, user agent,
+  fingerprints): replay-anything does not hide automation.
 
 Validate: `replay-anything validate <file>`.
 

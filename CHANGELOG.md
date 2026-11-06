@@ -3,6 +3,18 @@
 All notable changes are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Recipe options for sites with bot protection: `transport: browser` sends request steps with fetch() from
+  a real page on the site, `headed: true` opens a visible window, `pacing: human` waits 0.5-2 s between
+  steps and actions. No stealth features: automation is not hidden.
+
+### Changed
+- All browser steps in a run share one browser page instead of launching a browser per step, so a step
+  starts where the previous one ended (start it with `goto` for a fresh page). `via` is `browser` whenever
+  the run opened a browser.
+
 ## [0.2.0] - 2026-11-05
 
 First public release.

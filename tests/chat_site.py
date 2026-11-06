@@ -243,7 +243,32 @@ async def rich_send(channel: str, request: Request):
     return JSONResponse({"id": msg["id"]}, status_code=201)
 
 
-@app.get("/go")
+@app.get("/guarded", response_class=HTMLResponse)
+def guarded_page():
+    """Like a bot-defense script: the page's own JavaScript sets a cookie the API then requires."""
+    return "<html><body><script>document.cookie = 'js_check=passed; path=/'</script>guarded</body></html>"
+
+
+@app.post("/guarded/api/echo")
+async def guarded_echo(request: Request):
+    if request.cookies.get("js_check") != "passed":
+        raise HTTPException(403, "bot check: no js_check cookie")
+    form = await request.form()
+    upload = form.get("file")
+    return {
+        "user": _session(request)["user"],
+        "user_agent": request.headers.get("user-agent", ""),
+        "text": form.get("text"),
+        "file": (await upload.read()).decode() if upload else None,
+    }
+
+
+@app.post("/guarded/api/json")
+async def guarded_json(request: Request):
+    return {"content_type": request.headers.get("content-type"), "body": await request.json()}
+
+
+@app.api_route("/go", methods=["GET", "POST"])
 def go(to: str):
     """An open redirect, like many sites have: lets tests check that a session never follows one off-site."""
     return RedirectResponse(to, status_code=302)

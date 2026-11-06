@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import base64
 import json
+import mimetypes
 import os
+import random
 import re
 import time
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any
 
 import httpx
@@ -164,13 +168,17 @@ def _run_steps(recipe: Recipe, inputs: dict, state: dict | None, timeout: float,
     scope: dict[str, Any] = {"inputs": inputs}
     ran: list[str] = []
     file_inputs = {v for k, v in inputs.items() if recipe.inputs[k]["type"] == "file" and v}
-    with httpx.Client(
-        base_url=recipe.site,
-        cookies=sessions.cookie_jar(state, recipe.site),
-        follow_redirects=True,
-        timeout=timeout,
-        event_hooks={"request": [_stay_on_site(recipe)]},
-    ) as client:
+    with (
+        httpx.Client(
+            base_url=recipe.site,
+            cookies=sessions.cookie_jar(state, recipe.site),
+            follow_redirects=True,
+            timeout=timeout,
+            event_hooks={"request": [_stay_on_site(recipe)]},
+        ) as client,
+        _Page(recipe, state) as page,
+    ):
+        send = partial(page.fetch, timeout=timeout) if recipe.transport == "browser" else client.request
         for step in recipe.steps:
             sid = step["id"]
             try:
@@ -183,13 +191,15 @@ def _run_steps(recipe: Recipe, inputs: dict, state: dict | None, timeout: float,
                 raise DryRunStop(
                     f"step {sid} ({str(step.get('request') or 'websocket ' + str(step.get('websocket')))[:80]})"
                 )
+            if ran:
+                _pause(recipe)
             try:
                 if "request" in step:
-                    scope[sid] = _request(step, scope, client, recipe, file_inputs, state is not None)
+                    scope[sid] = _request(step, scope, send, recipe, file_inputs, state is not None)
                 elif "websocket" in step:
                     scope[sid] = _websocket(step, scope, client, recipe, timeout)
                 else:
-                    scope[sid] = _browser_step(step, scope, recipe, state, dry_run)
+                    scope[sid] = page.actions(step["browser"], scope, dry_run)
             except (ReplayError, DryRunStop):
                 raise
             except TemplateError as e:
@@ -209,13 +219,18 @@ def _run_steps(recipe: Recipe, inputs: dict, state: dict | None, timeout: float,
             output = render(recipe.output, scope) if recipe.output is not None else {k: scope[k] for k in ran}
         except TemplateError as e:
             raise StepFailed("output", str(e)) from e
-    used_browser = any("browser" in s for s in recipe.steps if s["id"] in ran)
+    used_browser = page.opened
     return Result(output=output, via="browser" if used_browser else "request", steps=ran)
 
 
-def _request(
-    step: dict, scope: dict, client: httpx.Client, recipe: Recipe, file_inputs: set[str], authed: bool
-) -> dict:
+def _pause(recipe: Recipe) -> None:
+    """`pacing: human`: wait like a person would between steps and actions. Off by default."""
+    if recipe.pacing == "human":
+        time.sleep(random.uniform(0.5, 2.0))
+
+
+def _request(step: dict, scope: dict, send, recipe: Recipe, file_inputs: set[str], authed: bool) -> dict:
+    """`send` is httpx's client.request, or _Page.fetch for `transport: browser`."""
     sid = step["id"]
     method, url = str(step["request"]).strip().split(" ", 1)
     url = _on_site(render_url(url.strip(), scope), recipe, sid)
@@ -244,7 +259,7 @@ def _request(
                 else:
                     data[k] = str(v)
             kwargs["files"], kwargs["data"] = files or None, data or None
-        resp = client.request(method.upper(), url, **kwargs)
+        resp = send(method.upper(), url, **kwargs)
     finally:
         for fh in opened:
             fh.close()
@@ -391,48 +406,159 @@ def _changes_site(step: dict) -> bool:
     return "request" in step and str(step["request"]).split(" ", 1)[0].upper() not in ("GET", "HEAD", "OPTIONS")
 
 
-def _browser_step(step: dict, scope: dict, recipe: Recipe, state: dict | None, dry_run: bool = False) -> dict:
-    return _with_page(recipe, state, step["browser"], scope, dry_run)
+_FETCH_JS = """async ({url, method, headers, body, parts, timeout}) => {
+  if (parts) {
+    body = new FormData();
+    for (const [name, value, filename, b64, type] of parts)
+      if (b64 == null) body.append(name, value);
+      else body.append(name, new Blob([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], {type}), filename);
+  }
+  const r = await fetch(url, {method, headers, body, credentials: 'same-origin',
+                              redirect: 'manual', signal: AbortSignal.timeout(timeout)});
+  // redirect: 'manual' stops at the first hop, so nothing is ever sent to the place it points to
+  if (r.type === 'opaqueredirect') return {redirect: true};
+  return {status: r.status, url: r.url,
+          headers: [...r.headers], text: await r.text()};
+}"""
 
 
-def _with_page(recipe: Recipe, state: dict | None, actions: list[dict], scope: dict, dry_run: bool = False) -> dict:
-    from playwright.sync_api import sync_playwright
+@dataclass
+class _FetchResponse:
+    """What request steps read from an httpx.Response, filled from a fetch() in the page."""
 
-    from .browser import DryRunStop, launch, run_actions
+    status_code: int
+    url: httpx.URL
+    history: list
+    headers: httpx.Headers
+    text: str
 
-    def r(v):
-        if isinstance(v, tuple) and v[0] == "__when__":
-            return condition(v[1], scope)
-        return render(v, scope)
+    def json(self) -> Any:
+        return json.loads(self.text)
 
-    def on_login_page(page) -> bool:
+
+class _Page:
+    """One browser page per run, opened on first use. Browser steps share it, and with
+    `transport: browser` request steps run as fetch() inside it, so they carry the real browser's
+    cookies, TLS and whatever tokens the site's own scripts set. Nothing is faked or hidden."""
+
+    def __init__(self, recipe: Recipe, state: dict | None):
+        self.recipe, self.state = recipe, state
+        self.pw = self.browser = self.page = None
+
+    @property
+    def opened(self) -> bool:
+        return self.page is not None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        try:
+            if self.browser:
+                self.browser.close()
+        finally:
+            if self.pw:
+                self.pw.stop()
+
+    def _open(self):
+        if self.page is None:
+            from playwright.sync_api import sync_playwright
+
+            from .browser import launch
+
+            self.pw = sync_playwright().start()
+            prof = sessions.profile(self.recipe.site) if self.recipe.auth == "session" else None
+            self.browser, ctx = launch(
+                self.pw, headless=not self.recipe.headed, storage_state=None if prof else self.state, profile=prof
+            )
+            self.page = ctx.new_page()
+        return self.page
+
+    def _on_login_page(self) -> bool:
         return (
-            recipe.auth == "session"
-            and bool(LOGIN_HINT.search(page.url))
-            and httpx.URL(page.url).path != httpx.URL(recipe.site).path
+            self.recipe.auth == "session"
+            and bool(LOGIN_HINT.search(self.page.url))
+            and httpx.URL(self.page.url).path != httpx.URL(self.recipe.site).path
         )
 
-    with sync_playwright() as pw:
-        prof = sessions.profile(recipe.site) if recipe.auth == "session" else None
-        browser, ctx = launch(pw, storage_state=None if prof else state, profile=prof)
+    def _check_login(self, e: Exception | None = None) -> None:
+        if self._on_login_page():
+            path = httpx.URL(self.page.url).path
+            raise SessionExpired(self.recipe.site, f"browser was sent to a login page ({path})") from e
+
+    def actions(self, actions: list[dict], scope: dict, dry_run: bool = False) -> dict:
+        from .browser import DryRunStop, run_actions
+
+        def r(v):
+            if isinstance(v, tuple) and v[0] == "__when__":
+                return condition(v[1], scope)
+            return render(v, scope)
+
+        page = self._open()
         try:
-            page = ctx.new_page()
-            try:
-                out = run_actions(
-                    page, actions, recipe.site, r, on_navigate=lambda: on_login_page(page), dry_run=dry_run
-                )
-            except DryRunStop:
-                raise
-            except Exception as e:
-                if on_login_page(page):
-                    path = httpx.URL(page.url).path
-                    raise SessionExpired(recipe.site, f"browser was sent to a login page ({path})") from e
-                raise
-            if on_login_page(page):
-                raise SessionExpired(recipe.site, f"browser ended on a login page ({httpx.URL(page.url).path})")
-            return out
-        finally:
-            browser.close()
+            out = run_actions(
+                page,
+                actions,
+                self.recipe.site,
+                r,
+                on_navigate=self._on_login_page,
+                dry_run=dry_run,
+                pause=lambda: _pause(self.recipe),
+            )
+        except DryRunStop:
+            raise
+        except Exception as e:
+            self._check_login(e)
+            raise
+        self._check_login()
+        return out
+
+    def fetch(self, method: str, url: str, *, timeout: float, **kw: Any) -> _FetchResponse:
+        """Takes the httpx client.request arguments _request uses (headers, params, json, data, content,
+        files) and sends them with fetch() from a page on the site. The site is loaded once first, so its
+        scripts (and any bot checks) run and requests are same-origin. The browser sets cookies and
+        refuses headers it controls (Cookie, User-Agent, Origin), so a recipe can't override them."""
+        page = self._open()
+        site = httpx.URL(self.recipe.site)
+        if httpx.URL(page.url).host != site.host:  # also catches a page script that navigated away
+            page.goto(self.recipe.site, timeout=timeout * 1000)
+            self._check_login()
+            landed = httpx.URL(page.url).host
+            if landed != site.host:
+                raise OffSiteRedirect(f"the site page ended on host '{landed}', not the recipe site")
+        full = httpx.URL(url if "://" in url else self.recipe.site + url)
+        if kw.get("params"):
+            full = full.copy_merge_params(kw["params"])
+        headers = httpx.Headers(kw.get("headers") or {})  # case-insensitive, like httpx's own merge
+        body = parts = None
+        if kw.get("json") is not None:
+            body = json.dumps(kw["json"], separators=(",", ":"), ensure_ascii=False)  # same bytes as httpx
+            headers.setdefault("Content-Type", "application/json")
+        elif kw.get("files") is not None:  # multipart: file bytes travel as base64, rebuilt as a FormData
+            parts = [[k, str(v), None, None] for k, v in (kw.get("data") or {}).items()]
+            parts += [
+                [k, "", name, base64.b64encode(fh.read()).decode(), mimetypes.guess_type(name)[0] or ""]
+                for k, (name, fh) in kw["files"].items()
+            ]
+        elif kw.get("data") is not None:
+            body = str(httpx.QueryParams(kw["data"]))
+            headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
+        elif kw.get("content") is not None:
+            body = kw["content"]
+        args = {"url": str(full), "method": method, "headers": dict(headers), "body": body, "parts": parts}
+        r = page.evaluate(_FETCH_JS, {**args, "timeout": int(timeout * 1000)})
+        if r.get("redirect"):  # the browser hides where it points, so it is never followed
+            if self.recipe.auth == "session":
+                raise SessionExpired(self.recipe.site, f"{method} {full.path} was redirected (usually to login)")
+            raise OffSiteRedirect(f"{method} {full.path} was redirected; transport: browser doesn't follow redirects")
+        resp = _FetchResponse(
+            status_code=r["status"],
+            url=httpx.URL(r["url"]),
+            history=[],
+            headers=httpx.Headers(r["headers"]),
+            text=r["text"],
+        )
+        return resp
 
 
 def _run_fallback(
@@ -440,7 +566,8 @@ def _run_fallback(
 ) -> Result:
     fb = recipe.fallback or {}
     scope: dict[str, Any] = {"inputs": inputs}
-    scope["browser"] = _with_page(recipe, state, fb["browser"], scope, dry_run)
+    with _Page(recipe, state) as page:
+        scope["browser"] = page.actions(fb["browser"], scope, dry_run)
     output = render(fb["output"], scope) if "output" in fb else scope["browser"]
     return Result(output=output, via="browser", steps=["fallback"], fallback_reason=reason)
 

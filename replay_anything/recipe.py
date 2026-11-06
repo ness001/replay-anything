@@ -33,6 +33,9 @@ class Recipe:
     fallback: dict | None
     path: Path | None = None
     tested: bool = True  # false: auto-saved and not run yet (it changes something on the site)
+    transport: str = "http"  # "browser": request steps run as fetch() inside a real browser page
+    headed: bool = False  # browser opens a visible window instead of headless
+    pacing: str = "none"  # "human": random 0.5-2 s wait between steps and browser actions
     raw: dict = field(default_factory=dict, repr=False)
 
     @property
@@ -72,6 +75,12 @@ def parse(data: Any, path: Path | None = None) -> Recipe:
         _fail(where, "'tested' must be true or false")
     if "notes" in data and not isinstance(data["notes"], str):
         _fail(where, "'notes' must be text (how the recipe was built, known limits)")
+    if data.get("transport", "http") not in ("http", "browser"):
+        _fail(where, f"transport must be 'http' or 'browser', got '{data['transport']}'")
+    if "headed" in data and not isinstance(data["headed"], bool):
+        _fail(where, "'headed' must be true or false")
+    if data.get("pacing", "none") not in ("none", "human"):
+        _fail(where, f"pacing must be 'none' or 'human', got '{data['pacing']}'")
 
     inputs: dict[str, dict] = {}
     for name, spec in (data.get("inputs") or {}).items():
@@ -133,6 +142,9 @@ def parse(data: Any, path: Path | None = None) -> Recipe:
         fallback=fallback,
         path=path,
         tested=data.get("tested", True),
+        transport=data.get("transport", "http"),
+        headed=data.get("headed", False),
+        pacing=data.get("pacing", "none"),
         raw=data,
     )
 

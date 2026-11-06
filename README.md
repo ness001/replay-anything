@@ -306,6 +306,32 @@ time. It trusts the recipe: a site that changes data on a GET is not caught.
 Failure screenshots and page text are kept in a private `failures/` folder (newest 20 only). They can show
 private data, so don't share them without looking first.
 
+## Sites with bot protection
+
+By default request steps are sent from Python (httpx), and browser steps run headless. Sites behind
+bot defenses (Akamai, PerimeterX, Cloudflare, DataDome) often reject that. Three opt-in recipe fields help:
+
+```yaml
+transport: browser   # send request steps with fetch() from a page on the site, in the login profile
+headed: true         # open a visible browser window instead of headless
+pacing: human        # wait a random 0.5-2 s between steps and between browser actions
+```
+
+With `transport: browser`, the site is loaded once first, so its own scripts run and set whatever they set;
+each request then carries the real browser's cookies, TLS and headers. All browser steps in a run share one
+page. Websocket steps still go through Python. Differences from the default: a redirected request is
+stopped instead of followed (a redirect with a saved session is reported as `session_expired`), `extract`
+can only read response headers the site exposes to scripts (never `Set-Cookie`), and `via` is `browser`.
+
+Since the browser-transport change, all browser steps in a run share one page: a browser step starts where the
+previous one ended. Start a step with `goto` if it needs a fresh page.
+
+Replay-Anything has **no stealth features** and won't add them: it doesn't hide `navigator.webdriver`,
+change the user agent, or fake plugins or fingerprints, the same as Playwright itself. These options make a
+run behave like a real browser used at a person's pace; they don't hide that it is automated. Sites such as
+LinkedIn, Meta and Ticketmaster forbid automation in their terms and may suspend accounts. Use recipes
+only for your own tasks on sites that allow it.
+
 ## Errors returned by `run_recipe`
 
 `bad_inputs` (includes `expected_inputs`), `session_expired` (gives the `login` command to run),
@@ -317,7 +343,8 @@ field gives the recipe file and failure folder for repairing it), and
 ## Known limits
 
 - Sites that sign API calls with tokens kept in JavaScript or browser storage (Teams, many
-  SPAs) can't be replayed with cookies alone. Use `browser` steps for them. Corporate SSO that
+  SPAs) can't be replayed with cookies alone. Use `browser` steps for them (`transport: browser` only
+  adds what the browser itself sends, such as cookies, not tokens a page script attaches to its own calls). Corporate SSO that
   depends on device identity works through the persistent profile that `login` creates.
 - `record` keeps the raw HAR (it contains cookies) in the per-user `recordings` folder, and
   writes only a redacted summary to `--out`, which must be outside any git repo. Delete the raw HAR
