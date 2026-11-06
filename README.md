@@ -175,6 +175,26 @@ REPLAY_ANYTHING_AUTO_RECIPE=0  # environment variable: off for one session only
 | `bad_inputs` | It lists the expected inputs. |
 | The hook says nothing | Check that the recipe's `site` host matches the URL in the command, and that the plugin is installed (`/hooks` in Claude Code). |
 
+### 7. Configuration
+
+Most people need none of this. Settings for one recipe go in the recipe file; the rest are commands or
+environment variables.
+
+| To | Use |
+|---|---|
+| Turn auto-save off or on | `replay-anything auto off` / `on` / `status` (`REPLAY_ANYTHING_AUTO_RECIPE=0` for one session) |
+| Reuse a login from playwright-cli or agent-browser | `replay-anything link <site> --state <file>` or `--profile <dir>` (section 4) |
+| Hand a login to playwright-cli or agent-browser | `replay-anything export-state <site> <file>` |
+| Pass inputs from a script | `replay-anything run <recipe> -i name=value` (repeatable) or `--json '{...}'` |
+| Check a recipe without changing anything | `--dry-run` (CLI) or `dry_run=true` (`run_recipe`) |
+| Use only, or never, the browser fallback | `run --browser` / `run --no-fallback` |
+| Share recipes with a team | `REPLAY_ANYTHING_RECIPES=<folder>` (several separated by `;` on Windows, `:` elsewhere) |
+| Watch the browser while it runs | `REPLAY_ANYTHING_HEADED=1`, or `headed: true` in one recipe |
+| Work with a bot-protected site | `transport: browser` and `pacing: human` in that recipe ([Sites with bot protection](#sites-with-bot-protection)) |
+| Repeat browser actions for each item in a list | `for_each: "{{inputs.ids}}"` on a browser step |
+| Move the data folder | `REPLAY_ANYTHING_HOME=<folder>` (`replay-anything where` shows the current one) |
+| See response text in errors | `REPLAY_ANYTHING_DEBUG=1` (off by default: error pages can echo tokens) |
+
 ## Install details
 
 - `launch.py` creates `.venv` on first start. If you need a package mirror, set `PIP_INDEX_URL`.
