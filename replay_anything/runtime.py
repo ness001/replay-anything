@@ -8,6 +8,7 @@ import mimetypes
 import os
 import random
 import re
+import secrets
 import time
 from dataclasses import dataclass, field
 from functools import partial
@@ -21,7 +22,7 @@ from .errors import BadInputs, ReplayError, SessionExpired, StepFailed
 from .recipe import Recipe
 from .template import TemplateError, condition, render, render_url
 
-LOGIN_HINT = re.compile(r"/(login|signin|sign-in|auth|oauth2?|sso)\b", re.I)
+LOGIN_HINT = re.compile(r"/(login|signin|sign-in|auth|oauth2?|sso2?)\b", re.I)
 _PY_TYPES = {
     "string": str,
     "number": (int, float),
@@ -442,6 +443,12 @@ class _FetchResponse:
         return json.loads(self.text)
 
 
+READ_ONLY_ACTIONS = {"goto", "wait_for", "extract"}  # for_each loops of only these run in parallel pages
+_START_JS = "t => console.log(t)"
+START_TIMEOUT = 30  # seconds for an item's start signal to reach its handler
+EACH_PARALLEL = 8  # item pages at once; on a real site 8 was faster than 4, 16 or 24
+
+
 class _Page:
     """One browser page per run, opened on first use. Browser steps share it, and with
     `transport: browser` request steps run as fetch() inside it, so they carry the real browser's
@@ -480,19 +487,21 @@ class _Page:
             self.page = ctx.new_page()
         return self.page
 
-    def _on_login_page(self) -> bool:
+    def _on_login_page(self, page=None) -> bool:
+        page = page or self.page
         return (
             self.recipe.auth == "session"
-            and bool(LOGIN_HINT.search(self.page.url))
-            and httpx.URL(self.page.url).path != httpx.URL(self.recipe.site).path
+            and bool(LOGIN_HINT.search(page.url))
+            and httpx.URL(page.url).path != httpx.URL(self.recipe.site).path
         )
 
-    def _check_login(self, e: Exception | None = None) -> None:
-        if self._on_login_page():
-            path = httpx.URL(self.page.url).path
+    def _check_login(self, e: Exception | None = None, page=None) -> None:
+        page = page or self.page
+        if self._on_login_page(page):
+            path = httpx.URL(page.url).path
             raise SessionExpired(self.recipe.site, f"browser was sent to a login page ({path})") from e
 
-    def actions(self, actions: list[dict], scope: dict, dry_run: bool = False) -> dict:
+    def actions(self, actions: list[dict], scope: dict, dry_run: bool = False, page=None) -> dict:
         from .browser import DryRunStop, run_actions
 
         def r(v):
@@ -500,48 +509,121 @@ class _Page:
                 return condition(v[1], scope)
             return render(v, scope)
 
-        page = self._open()
+        page = page or self._open()
         try:
             out = run_actions(
                 page,
                 actions,
                 self.recipe.site,
                 r,
-                on_navigate=self._on_login_page,
+                on_navigate=lambda: self._on_login_page(page),
                 dry_run=dry_run,
                 pause=lambda: _pause(self.recipe),
             )
         except DryRunStop:
             raise
         except Exception as e:
-            self._check_login(e)
+            self._check_login(e, page)
             raise
-        self._check_login()
+        self._check_login(page=page)
         return out
 
     def each(self, items: list, actions: list[dict], scope: dict, dry_run: bool = False) -> list[dict]:
-        """for_each: run the actions once per item in this page, with {{item}} set. Returns
+        """for_each: run the actions once per item, with {{item}} set. Returns, in input order,
         [{...extracted, item, ok: True} | {item, ok: False, error, saved}]; a failed item doesn't stop the rest.
-        A login page, a dry-run stop or a template error (a recipe mistake) stops the step."""
-        from .browser import DryRunStop
+        A login page, a dry-run stop or a template error (a recipe mistake) stops the step.
 
+        Read-only actions (goto, wait_for, extract) run in their own page per item, up to EACH_PARALLEL
+        at once in the run's one browser context. Anything else (a click, fill, press...) may change the
+        site, so those loops, and `pacing: human`, keep one page and one item at a time."""
         if not items:  # nothing to do: don't start a browser
             return []
-        results = []
+        read_only = all(set(a) - {"when"} <= READ_ONLY_ACTIONS for a in actions)
+        if read_only and len(items) > 1 and self.recipe.pacing != "human":
+            return self._each_parallel(items, actions, scope, dry_run)
+        return [self._one_item(item, actions, scope, dry_run) for item in items]
+
+    def _one_item(self, item: Any, actions: list[dict], scope: dict, dry_run: bool, page=None) -> dict:
+        from .browser import DryRunStop
+
+        try:  # each item gets its own scope, so parallel items never see each other's {{item}}
+            got = self.actions(actions, {**scope, "item": item}, dry_run, page)
+        except (DryRunStop, TemplateError, SessionExpired):
+            raise
+        except Exception as e:
+            return {"item": item, "ok": False, "error": _short(e), "saved": getattr(e, "saved", None)}
+        return {**got, "item": item, "ok": True}  # bookkeeping fields win over extracts
+
+    def _each_parallel(self, items: list, actions: list[dict], scope: dict, dry_run: bool) -> list[dict]:
+        """Runs up to EACH_PARALLEL items at once, each in a page it opens itself, in the run's one context.
+
+        How they overlap: sync Playwright runs every event handler in its own greenlet on the Playwright
+        thread, and a handler that waits on the browser lets the others run. That is how playwright-python
+        implements sync events (an implementation detail, not a documented concurrency API; the e2e tests
+        check it still overlaps). Each item is started by a console message, with a random token, logged
+        in a blank page this step opens for that purpose only (never a site page, whose scripts may replace
+        console.log). Its handler opens a page with ctx.new_page() and uses only that returned page; pages
+        the site opens are never used or closed. A start that doesn't arrive within START_TIMEOUT fails the
+        step instead of waiting forever."""
+        main = self._open()
+        ctx = main.context
+        token = f"replay-anything-item-{secrets.token_hex(8)}:"
+        results: list[dict | None] = [None] * len(items)
+        state: dict[str, Any] = {"running": 0, "fatal": None}
+        waiting: dict[int, float] = {}  # item -> when its start was sent, until its handler picks it up
+
+        def run(msg):
+            text = msg.text
+            if not text.startswith(token):
+                return
+            i, page = int(text[len(token) :]), None
+            if waiting.pop(i, None) is None:  # already given up on
+                return
+            try:
+                page = ctx.new_page()
+                if state["fatal"] is None:
+                    results[i] = self._one_item(items[i], actions, scope, dry_run, page)
+            except BaseException as e:  # a stop for the whole step: raised once every item page is closed
+                state["fatal"] = state["fatal"] or e
+            finally:
+                if page is not None:
+                    try:
+                        page.close()
+                    except Exception:
+                        pass
+                state["running"] -= 1  # only after the close, so the step never ends with a page open
+
+        trigger = ctx.new_page()
         try:
-            for item in items:
-                scope["item"] = item
-                try:
-                    got = self.actions(actions, scope, dry_run)
-                except (DryRunStop, TemplateError, SessionExpired):
-                    raise
-                except Exception as e:
-                    results.append({"item": item, "ok": False, "error": _short(e), "saved": getattr(e, "saved", None)})
-                    continue
-                results.append({**got, "item": item, "ok": True})  # bookkeeping fields win over extracts
+            trigger.on("console", run)
+            nxt = 0
+            while state["running"] or (nxt < len(items) and state["fatal"] is None):
+                for i, sent in list(waiting.items()):
+                    if time.monotonic() - sent > START_TIMEOUT:
+                        del waiting[i]
+                        state["running"] -= 1
+                        state["fatal"] = state["fatal"] or RuntimeError(f"item {i + 1} did not start")
+                if nxt < len(items) and state["fatal"] is None and state["running"] < EACH_PARALLEL:
+                    state["running"] += 1
+                    waiting[nxt] = time.monotonic()
+                    try:
+                        trigger.evaluate(_START_JS, f"{token}{nxt}")  # its handler runs the item
+                    except BaseException as e:
+                        if waiting.pop(nxt, None) is not None:
+                            state["running"] -= 1
+                        state["fatal"] = state["fatal"] or e
+                        continue
+                    nxt += 1
+                else:
+                    trigger.wait_for_timeout(50)  # lets the item handlers run
         finally:
-            scope.pop("item", None)
-        return results
+            try:
+                trigger.close()
+            except Exception:
+                pass
+        if state["fatal"] is not None:
+            raise state["fatal"]
+        return results  # type: ignore[return-value]
 
     def fetch(self, method: str, url: str, *, timeout: float, **kw: Any) -> _FetchResponse:
         """Takes the httpx client.request arguments _request uses (headers, params, json, data, content,

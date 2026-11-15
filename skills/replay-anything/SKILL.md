@@ -129,8 +129,11 @@ Reference:
   `extract`), `browser: [actions]`. A browser step may set `for_each: "{{inputs.ids}}"` (a list):
   its actions run once per item in the same browser, with `{{item}}` set, and the step's value is a
   list of `{item, ok, ...extracted}` or `{item, ok: false, error}` (a failed item doesn't stop the
-  rest; failed items keep their screenshot path in `saved`). Items share one page, so start the
-  actions with a `goto` (a failed item can leave a dialog open). `item` is reserved as a step id.
+  rest; failed items keep their screenshot path in `saved`). Results keep the input order. When
+  the actions are only `goto`, `wait_for` and `extract`, items run in their own pages, up to 8 at
+  once in the run's one browser; with any other action (or `pacing: human`) they run one at a time
+  in one page, so start the actions with a `goto` (a failed item can leave a dialog open). `item`
+  is reserved as a step id.
   Use it to read many pages with one sign-in instead of one run per page.
 - Browser actions: `goto` (or `{url, wait_response}` to read JSON the page loads itself, e.g. an API
   called with a token kept in the page), `fill`, `paste_html {selector, html | file}` (rich editors keep
@@ -183,8 +186,14 @@ scripts. Delete the `raw_har` file and the `--out` folder.
 
 ## Auto-save (no recording, no user steps)
 
-When the Replay-Anything hook (Claude Code) or your instructions (Codex/Copilot) say auto-save is on, build
-the recipe from the browser work you just did, without asking the user to log in or record:
+In Claude Code, the mod starts OFF. The user selects **Start recording** above the prompt to collect
+browser work across turns, then **Stop recording** to request recipe creation. Do not finalize at turn
+end, infer completion, or change the recording state after saving. Use only evidence from that recording;
+if compaction lost required details, report the gap. This mode tracks tool calls, not network traffic.
+The CLI `auto on/off` switch is separate and does not control the mod.
+
+When the mod requests finalization, or Codex/Copilot hooks or instructions say auto-save is on, build
+the recipe from the recorded browser work without asking the user to log in or record again:
 
 1. Skip it if the work was exploration, failed, or isn't a task the user would repeat.
 2. Write `browser` steps that repeat what you did: stable selectors (`playwright-cli generate-locator <ref>`,
@@ -198,7 +207,8 @@ the recipe from the browser work you just did, without asking the user to log in
    **Test only read-only recipes for real.** If the recipe changes something on the site (posts, sends, edits,
    deletes), add `tested: false` and do not run it. Its first real run is the test. `list_recipes` shows
    `tested: false` until then, and a successful run clears it.
-6. Tell the user in one line: the recipe id, and that `replay-anything auto off` disables auto-save.
+6. Tell the user the recipe id. In Claude Code, recording is controlled by the TUI and stays OFF after
+   Stop. For Codex/Copilot, mention that `replay-anything auto off` disables legacy auto-save.
 
 ## Errors you will see from run_recipe
 

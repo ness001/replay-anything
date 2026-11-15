@@ -9,10 +9,14 @@
 - GET  /c/{channel}: HTML chat page (textarea, file input, send button) for browser steps.
 - POST /admin/break_api {broken: bool}: make the JSON API return 500 to force the browser fallback.
 - POST /admin/expire_sessions: forget all sessions.
+- GET  /popup/{n}: like /slow/{n}, and first opens /whoami in a noopener window.
+- GET  /quiet: a page whose script replaces console.log with a no-op.
+- GET  /slow/{n}: a page that loads /api/slow/{n} (answers after 0.5 s); GET /admin/slow_peak: most at once.
 """
 
 from __future__ import annotations
 
+import asyncio
 import html
 import itertools
 import secrets
@@ -24,7 +28,7 @@ app = FastAPI()
 SESSIONS: dict[str, dict] = {}
 MESSAGES: dict[str, list[dict]] = {}
 UPLOADS: dict[str, dict] = {}
-STATE = {"broken": False}
+STATE = {"broken": False, "slow_now": 0, "slow_peak": 0}
 _ids = itertools.count(1)
 
 
@@ -234,6 +238,52 @@ fetch('/api/channels/{channel}/messages').then(r => r.json()).then(d => out.text
 </script></body></html>"""
 
 
+@app.get("/slow/{n}", response_class=HTMLResponse)
+def slow_page(n: str, request: Request):
+    if not SESSIONS.get(request.cookies.get("sid", "")):
+        return RedirectResponse("/login", status_code=303)
+    return f"""<html><body><p id=out>loading</p><script>
+fetch('/api/slow/{n}').then(r => r.json()).then(d => out.textContent = d.n);
+</script></body></html>"""
+
+
+@app.get("/popup/{n}", response_class=HTMLResponse)
+def popup_page(n: str, request: Request):
+    """Opens a window with noopener (so it has no opener), then loads /api/slow/{n} like /slow/{n}."""
+    if not SESSIONS.get(request.cookies.get("sid", "")):
+        return RedirectResponse("/login", status_code=303)
+    return f"""<html><body><p id=out>loading</p><script>
+window.open('/whoami', '_blank', 'noopener');
+fetch('/api/slow/{n}').then(r => r.json()).then(d => out.textContent = d.n);
+</script></body></html>"""
+
+
+@app.get("/quiet", response_class=HTMLResponse)
+def quiet_page():
+    """Like sites that silence logging: console.log does nothing here."""
+    return "<html><body><script>console.log = () => {};</script>quiet</body></html>"
+
+
+@app.get("/api/slow/{n}")
+async def slow_api(n: str, request: Request):
+    """Counts how many of these run at once, so tests can see for_each's parallel pages."""
+    _session(request)
+    STATE["slow_now"] += 1
+    STATE["slow_peak"] = max(STATE["slow_peak"], STATE["slow_now"])
+    try:
+        await asyncio.sleep(0.5)
+    finally:
+        STATE["slow_now"] -= 1
+    if n.startswith("bad"):
+        raise HTTPException(500, "bad item for testing")
+    return {"n": n}
+
+
+@app.get("/admin/slow_peak")
+def slow_peak():
+    return {"peak": STATE["slow_peak"], "now": STATE["slow_now"]}
+
+
 @app.post("/rich/{channel}/send")
 async def rich_send(channel: str, request: Request):
     s = _session(request)
@@ -296,7 +346,7 @@ def reset():
     SESSIONS.clear()
     MESSAGES.clear()
     UPLOADS.clear()
-    STATE["broken"] = False
+    STATE.update(broken=False, slow_now=0, slow_peak=0)
     return JSONResponse({"ok": True})
 
 

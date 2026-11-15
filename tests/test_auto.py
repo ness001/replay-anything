@@ -102,9 +102,8 @@ def test_bad_tested_value_rejected(home, tmp_path):
 
 
 def test_stop_through_plugin_config(home):
-    cfg = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
-    assert {"PreToolUse", "PostToolUse", "Stop"} <= set(cfg)
-    args = [a.replace("${CLAUDE_PLUGIN_ROOT}", str(ROOT)) for a in cfg["Stop"][0]["hooks"][0]["args"]]
+    # Claude uses in-process recording controls; other hosts retain this launcher contract.
+    args = [str(ROOT / "launch.py"), "cli", "hook"]
     env = {k: v for k, v in os.environ.items() if k != auto.ENV}
 
     # The MCP server creates the venv before a plugin hook needs it.

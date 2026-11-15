@@ -828,3 +828,236 @@ def test_for_each_reads_several_pages_in_one_browser(site, tmp_path):
     assert res[0]["ok"] and isinstance(res[0]["msgs"], list)
     assert res[1]["ok"] and isinstance(res[1]["msgs"], list)
     assert res[2]["ok"] is False and res[2]["error"] and res[2].get("saved")  # screenshot path kept per item
+
+
+def _slow_each(tmp_path, actions=None, name="slow"):
+    import yaml
+
+    actions = actions or [
+        {
+            "goto": {
+                "url": "/slow/{{item}}",
+                "timeout": 10000,
+                "wait_response": {"url": "/api/slow/{{item}}", "extract": {"n": "$.n"}},
+            }
+        }
+    ]
+    p = tmp_path / f"{name}.yaml"
+    p.write_text(
+        yaml.safe_dump(
+            {
+                "name": name,
+                "description": "d",
+                "site": SITE,
+                "auth": "session",
+                "inputs": {"ids": {"type": "array"}},
+                "steps": [{"id": "load", "for_each": "{{inputs.ids}}", "browser": actions}],
+                "output": {"results": "{{load}}"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    return p
+
+
+def _count_launches(monkeypatch):
+    """Wrap browser.launch: count launches and the pages opened in each context."""
+    from replay_anything import browser
+
+    seen = {
+        "launches": 0,
+        "pages": 0,
+        "closed": 0,
+        "left_open": None,
+        "open_urls": None,
+        "fail_new_page": None,
+        "foreign_first": False,
+    }
+    real = browser.launch
+
+    def launch(pw, **kw):
+        closer, ctx = real(pw, **kw)
+        seen["launches"] += 1
+
+        def on_page(p):
+            seen["pages"] += 1
+            p.on("close", lambda _: seen.__setitem__("closed", seen["closed"] + 1))
+
+        ctx.on("page", on_page)
+        real_new_page = ctx.new_page
+
+        def new_page():  # fail_new_page = n: the n-th new page fails to open
+            if seen["fail_new_page"] == seen["pages"]:
+                raise RuntimeError("synthetic new_page failure")
+            # after the run's page exists: a tab with no opener appears just as an item page is wanted
+            if seen["foreign_first"] and ctx.pages:
+                real_new_page().goto(f"{SITE}/whoami")
+            return real_new_page()
+
+        ctx.new_page = new_page
+        real_close = closer.close
+
+        def close():
+            seen["left_open"] = seen["pages"] - seen["closed"]
+            seen["open_urls"] = sorted(httpx.URL(p.url).path for p in ctx.pages)
+            real_close()
+
+        closer.close = close
+        return closer, ctx
+
+    monkeypatch.setattr(browser, "launch", launch)
+    return seen
+
+
+@pytest.mark.browser
+def test_for_each_reads_items_in_parallel_pages_of_one_context(site, tmp_path, monkeypatch):
+    """A read-only for_each opens one page per item in the run's one context, at most 8 at once;
+    results keep input order, a failed item is recorded without stopping the rest, every item page is closed."""
+    import time
+
+    save_login()
+    seen = _count_launches(monkeypatch)
+    ids = [f"i{k}" for k in range(12)]
+    ids[3] = "bad3"
+    t = time.monotonic()
+    r = api.run_recipe(str(_slow_each(tmp_path)), {"ids": ids}, allow_path=True)
+    took = time.monotonic() - t
+    assert r["ok"], r
+    res = r["output"]["results"]
+    assert [x["item"] for x in res] == ids
+    assert all(x["ok"] and x["n"] == x["item"] for k, x in enumerate(res) if k != 3)
+    assert res[3]["ok"] is False and "HTTP 500" in res[3]["error"]
+    peak = httpx.get(f"{SITE}/admin/slow_peak").json()["peak"]
+    assert 4 <= peak <= 8, peak  # several item requests in flight at once, never more than 8
+    assert took < 12 * 0.5 + 5, took  # sequential is at least 6 s of requests alone; +5 s for the browser start
+    assert seen["launches"] == 1
+    assert seen["pages"] == 2 + len(ids)  # the run's page, the step's start page and one per item
+    assert seen["left_open"] == 1  # every item page was closed
+
+
+@pytest.mark.browser
+def test_for_each_with_actions_that_can_write_runs_one_item_at_a_time(site, tmp_path):
+    """Anything beyond goto / wait_for / extract (a click here) keeps the old one-page, one-item-at-a-time loop."""
+    save_login()
+    actions = [
+        {"goto": {"url": "/slow/{{item}}", "wait_response": {"url": "/api/slow/{{item}}", "extract": {"n": "$.n"}}}},
+        {"click": "#out"},
+    ]
+    r = api.run_recipe(str(_slow_each(tmp_path, actions)), {"ids": ["a", "b", "c"]}, allow_path=True)
+    assert r["ok"], r
+    assert [x["n"] for x in r["output"]["results"]] == ["a", "b", "c"]
+    assert httpx.get(f"{SITE}/admin/slow_peak").json()["peak"] == 1
+
+
+@pytest.mark.browser
+def test_for_each_dry_run_stops_before_a_write_in_the_loop(site, tmp_path):
+    sid = save_login()
+    actions = [
+        {"goto": "/c/{{item}}"},
+        {"fill": {"selector": "textarea[name=text]", "value": "dry"}},
+        {"click": {"selector": "button[aria-label=Send]"}, "submits": True},
+    ]
+    r = api.run_recipe(str(_slow_each(tmp_path, actions)), {"ids": ["general", "dev"]}, allow_path=True, dry_run=True)
+    assert r["dry_run"] and r["stopped_before"] == "action 3 (click button[aria-label=Send])", r
+    assert messages(sid) == []
+
+
+@pytest.mark.browser
+def test_for_each_parallel_session_expired_stops_the_run(site, tmp_path, monkeypatch):
+    save_login()
+    httpx.post(f"{SITE}/admin/expire_sessions")
+    seen = _count_launches(monkeypatch)
+    r = api.run_recipe(str(_slow_each(tmp_path)), {"ids": [f"i{k}" for k in range(10)]}, allow_path=True)
+    assert r["error"] == "session_expired", r
+    assert seen["left_open"] == 1
+
+
+@pytest.mark.browser
+def test_for_each_items_run_only_in_their_own_pages(site, tmp_path, monkeypatch):
+    """Pages that are not the item's own (a noopener window the site opens, a tab with no opener that
+    appears while an item page is being made) must not take an item's place: each item runs in the
+    page made for it, closes only that page, and leaves the others alone."""
+    save_login()
+    seen = _count_launches(monkeypatch)
+    actions = [
+        {
+            "goto": {
+                "url": "/popup/{{item}}",
+                "timeout": 10000,
+                "wait_response": {"url": "/api/slow/{{item}}", "extract": {"n": "$.n"}},
+            }
+        }
+    ]
+    ids = [f"p{k}" for k in range(5)]
+    seen["foreign_first"] = True
+    r = api.run_recipe(str(_slow_each(tmp_path, actions, name="pop")), {"ids": ids}, allow_path=True)
+    assert r["ok"], r
+    assert [(x["item"], x["ok"], x.get("n")) for x in r["output"]["results"]] == [(i, True, i) for i in ids]
+    # still open at the end: the run's page and the 5 site windows; every item page was closed
+    # the run's page (about:blank's path is "blank"), 5 windows the item pages opened and 6 foreign tabs
+    # (one before each new page: the step's start page and the 5 item pages)
+    assert seen["open_urls"] == sorted(["blank"] + ["/whoami"] * 11), seen
+
+
+@pytest.mark.browser
+def test_for_each_new_page_failure_closes_the_open_item_pages(site, tmp_path, monkeypatch):
+    save_login()
+    seen = _count_launches(monkeypatch)
+    seen["fail_new_page"] = 3  # the run's page and two item pages open, the third item page fails
+    r = api.run_recipe(str(_slow_each(tmp_path)), {"ids": [f"i{k}" for k in range(6)]}, allow_path=True)
+    assert r["error"] == "step_failed" and "synthetic new_page failure" in r["message"], r
+    assert seen["left_open"] == 1, seen
+
+
+def _run_bounded(recipe, inputs, limit=90, setup="pass"):
+    """Run a recipe in a child process so a hang fails the test (and is killed) instead of blocking it."""
+    import os
+    import subprocess
+    import sys
+
+    code = (
+        f"import json, sys; from replay_anything import api, runtime; {setup}; "
+        "print(json.dumps(api.run_recipe(sys.argv[1], json.loads(sys.argv[2]), allow_path=True)))"
+    )
+    proc = subprocess.Popen(
+        [sys.executable, "-c", code, str(recipe), json.dumps(inputs)],
+        cwd=Path(__file__).resolve().parent.parent,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        out, _ = proc.communicate(timeout=limit)
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+        else:
+            proc.kill()
+        proc.communicate()
+        pytest.fail(f"run did not finish within {limit} s")
+    return json.loads(out.strip().splitlines()[-1])
+
+
+@pytest.mark.browser
+def test_for_each_after_a_page_that_silences_console_log(site, tmp_path):
+    """An earlier browser step leaves the run's page on a site page that replaces console.log;
+    the parallel for_each must still start and finish every item."""
+    import yaml
+
+    save_login()
+    p = _slow_each(tmp_path)
+    r = yaml.safe_load(p.read_text(encoding="utf-8"))
+    r["steps"].insert(0, {"id": "first", "browser": [{"goto": "/quiet"}]})
+    p.write_text(yaml.safe_dump(r), encoding="utf-8")
+    ids = [f"q{k}" for k in range(4)]
+    res = _run_bounded(p, {"ids": ids})
+    assert res["ok"], res
+    assert [(x["item"], x["ok"], x["n"]) for x in res["output"]["results"]] == [(i, True, i) for i in ids]
+
+
+@pytest.mark.browser
+def test_for_each_lost_item_start_fails_the_step_instead_of_hanging(site, tmp_path):
+    """If an item's start signal never arrives, the step fails after a bounded wait."""
+    save_login()
+    setup = "runtime._START_JS = 't => 0'; runtime.START_TIMEOUT = 2"  # the start is never logged
+    res = _run_bounded(_slow_each(tmp_path), {"ids": ["a", "b"]}, setup=setup)
+    assert res["error"] == "step_failed" and "did not start" in res["message"], res

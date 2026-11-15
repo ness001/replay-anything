@@ -5,6 +5,14 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Claude Code replaces per-command Python hooks with an in-process recording mod. The prompt row
+  shows gray OFF or red RECORDING with Start/Stop controls. Recording is opt-in, spans conversation
+  turns, and finalizes only on explicit Stop. Codex/Copilot retain their existing hooks and auto-save.
+- A `for_each` whose actions only read (`goto`, `wait_for`, `extract`) runs its items in separate pages,
+  up to 8 at once, in the run's one browser context. Results keep the input order and per-item errors.
+  Loops with any other action, and `pacing: human` recipes, still run one item at a time in one page.
+
 ## [0.3.0] - 2026-11-06
 
 ### Added

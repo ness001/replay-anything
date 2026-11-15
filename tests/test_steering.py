@@ -59,10 +59,8 @@ def test_hook_survives_garbage(home, monkeypatch, capsys):
 
 
 def test_hook_through_launch_and_plugin_config(home):
-    cfg = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
-    h = cfg["hooks"]["PreToolUse"][0]
-    assert h["matcher"] == "Bash"
-    args = [a.replace("${CLAUDE_PLUGIN_ROOT}", str(ROOT)) for a in h["hooks"][0]["args"]]
+    # The legacy launcher remains supported by Codex and Copilot.
+    args = [str(ROOT / "launch.py"), "cli", "hook"]
     env = {**os.environ}
 
     def run(cmd):
@@ -174,8 +172,7 @@ def test_codex_plugin_files(home):
         mcp["args"] == ["./launch.py", "mcp"] and mcp["cwd"] == "."
     )  # Codex doesn't expand ${CLAUDE_PLUGIN_ROOT} here
     hooks = json.loads((ROOT / manifest["hooks"]).read_text(encoding="utf-8"))["hooks"]
-    claude = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
-    assert set(hooks) == set(claude)
+    assert set(hooks) == {"PreToolUse", "PostToolUse", "Stop"}
     cmd = hooks["PreToolUse"][0]["hooks"][0]["command"]
     assert "args" not in hooks["PreToolUse"][0]["hooks"][0]
     args = cmd.replace("${PLUGIN_ROOT}", str(ROOT)).split('"')[1:]

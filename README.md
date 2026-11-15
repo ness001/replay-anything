@@ -48,11 +48,11 @@ reference in the skill.
 
 ### 1. Install
 
-Pick one per agent. Each one installs the skill, the MCP server, the browser hooks and auto-save.
-The only requirement is Python 3.11+ on `PATH`. On first start the plugin sets up its own `.venv`, which takes
-about a minute. In Claude Code, `/reload-plugins` activates installed or updated hooks, skills, and MCP servers
-in an interactive session; a new session also works. Auto-save is on by default and records subsequent browser
-work, not browser calls made before the plugin was loaded.
+Pick one per agent. Each one installs the skill, MCP server and that agent's supported hooks or mod. Python 3.11+ must be on `PATH`.
+On first start the plugin sets up its own `.venv`, which takes about a minute.
+Claude Code uses an in-process mod with recording controls; its recording starts **off**.
+The mod is checked against Claude Code 2.1.295's early-access API. Run `/reload-plugins` after an update,
+or start a new session. Codex and Copilot retain command hooks and their existing auto-save switch.
 
 **Claude Code**
 ```bash
@@ -136,19 +136,14 @@ replay-anything link https://teams.microsoft.com --state ~/.auth/teams.json
 
 **When the agent picks a browser tool by itself**, it is told about matching recipes first:
 
-- **Claude Code:** the plugin's hook checks every Bash command (a quick text check; only
-  `playwright-cli`, `agent-browser` and `npx @playwright/cli` commands go further). If the command opens a
-  site that has recipes, the agent sees a note like:
-
-  ```text
-  Replay-Anything has saved recipes for this site. If one matches the task, the MCP tool run_recipe does it
-  in one step (...); the browser is still available if no recipe fits or run_recipe returns step_failed.
-  - teams.microsoft.com/post_note_to_self: Post a text message to your own Microsoft Teams "Note to self" chat ... (inputs: text: string)
-  ```
-  It only adds a note and never blocks the command. Commands for other sites are not affected. A recipe for
-  `x.com` also matches `www.x.com`. If the site has a port, the port must match too. The hook stays silent
-  until the MCP server has set up `.venv` once.
-- **Codex:** same hook. Codex shows the note just before the command runs.
+- **Claude Code:** the host matches Bash commands containing `playwright-cli`, `agent-browser` or
+  `@playwright/cli` (including version suffixes and `.cmd`/`.exe`). Only matching commands enter the
+  mod's browser handlers. A before-command reminder asks the agent to call `list_recipes` and use
+  `run_recipe` when one fits. No Python hook process starts, including when recording is off.
+  This is text matching: quoted examples can match; aliases, wrapper scripts and full executable
+  paths can be missed. The mod does not block or rewrite browser commands.
+- **Codex:** its command hook names matching saved recipes just before the command runs.
+  A recipe for `x.com` also matches `www.x.com`; a site's port must match.
 - **Copilot:** Copilot hooks can't add a note before a command runs, so the note comes with the
   command's result.
 
@@ -161,28 +156,35 @@ flowchart LR
   B --> S[Offer: save as a recipe]
 ```
 
-### 5. Auto-save (on by default)
+### 5. Recording and auto-save
 
-When an agent does a task on a site with playwright-cli or agent-browser and no recipe covers that site,
-it saves the work as a recipe at the end of the task and tells you the recipe id in one line. You don't
-need to ask.
+**Claude Code:** a row above the prompt shows gray **OFF** with **Start recording**, or a red dot and
+**RECORDING** with **Stop recording**. Use the buttons to choose the recording boundary.
 
-- **Claude Code:** the plugin's hooks keep track of which sites were used. When the agent finishes, they
-  ask it once per site per session.
-- **Codex / Copilot:** the same hooks do this. With `install.py --rules` (no hooks), the rule text asks the
-  agent to do it instead.
-- **Skipped:** exploration, failed work, and tasks that aren't repeatable.
-- **Recipes that change something** (post, send, edit, delete) are saved with `tested: false` and are not
-  run, so nothing is posted twice. Their first real run is the test, and a successful run clears the mark.
-  Read-only recipes are tested right away.
+- Recording starts off and stays on across conversation turns until you press **Stop recording**.
+  Saving a recipe, ending a turn, idle time and context compaction do not stop it.
+- Stop turns recording off immediately and queues a request to build a recipe from that recording.
+  An empty recording queues nothing. The next Start creates a new recording.
+- Closing or clearing the conversation turns recording off. Unfinished recording recovery is not supported.
+- The mod tracks browser tool call IDs in session memory and uses the conversation as evidence;
+  it does not capture network traffic or video. It asks compaction to retain recipe evidence, but
+  a summary can lose details. Missing evidence must be reported instead of invented.
+- Recording covers the main conversation's Bash browser commands. Subagent browser work is not included.
+- A survey can temporarily occupy the row. The recording state remains unchanged.
 
-Turn it off or on:
+The `replay-anything auto on/off` CLI switch controls **Codex/Copilot's legacy auto-save**, not the mod's
+session-only recording state. Their hooks ask once per site at task completion; `install.py --rules`
+asks through instructions instead. Auto-save remains on by default for those integrations:
 
 ```bash
 replay-anything auto off       # stays off until "auto on"
 replay-anything auto status
 REPLAY_ANYTHING_AUTO_RECIPE=0  # environment variable: off for one session only
 ```
+
+Both paths skip failed work, non-repeatable exploration and tasks that are not useful as recipes.
+Recipes that change a site are saved with `tested: false` and are not run again to test them.
+Their first authorized real run is the test. Read-only recipes can be tested immediately.
 
 ### 6. When something goes wrong
 
@@ -191,7 +193,8 @@ REPLAY_ANYTHING_AUTO_RECIPE=0  # environment variable: off for one session only
 | `session_expired` | Run the `login` command it names. If you linked a file, refresh it with the tool (`state-save`) or run `replay-anything link <site> --remove`. |
 | `step_failed` | The site probably changed. The message names the failing action (for example `action 11 (click ...)`), and `fix` gives the recipe file and the folder with a screenshot and the page text. Say *"fix the recipe"*: the agent follows the skill's "Fix a recipe" section, redoes only the broken step in the browser and patches it. |
 | `bad_inputs` | It lists the expected inputs. |
-| The hook says nothing | Check that the recipe's `site` host matches the URL in the command, and that the plugin is installed (`/hooks` in Claude Code). |
+| The Claude recording row is missing | Run `/reload-plugins`; use a build with the function-hook mod API (checked on 2.1.295). A survey temporarily takes the row. |
+| A Codex/Copilot hook says nothing | Check the recipe's `site` host against the command URL and check that the plugin hooks are enabled. |
 
 ### 7. Configuration
 
@@ -200,7 +203,8 @@ environment variables.
 
 | To | Use |
 |---|---|
-| Turn auto-save off or on | `replay-anything auto off` / `on` / `status` (`REPLAY_ANYTHING_AUTO_RECIPE=0` for one session) |
+| Record across turns in Claude Code | **Start recording** / **Stop recording** above the prompt; off by default |
+| Turn Codex/Copilot auto-save off or on | `replay-anything auto off` / `on` / `status` (`REPLAY_ANYTHING_AUTO_RECIPE=0` for one session) |
 | Reuse a login from playwright-cli or agent-browser | `replay-anything link <site> --state <file>` or `--profile <dir>` (section 4) |
 | Hand a login to playwright-cli or agent-browser | `replay-anything export-state <site> <file>` |
 | Pass inputs from a script | `replay-anything run <recipe> -i name=value` (repeatable) or `--json '{...}'` |
@@ -209,7 +213,7 @@ environment variables.
 | Share recipes with a team | `REPLAY_ANYTHING_RECIPES=<folder>` (several separated by `;` on Windows, `:` elsewhere) |
 | Watch the browser while it runs | `REPLAY_ANYTHING_HEADED=1`, or `headed: true` in one recipe |
 | Work with a bot-protected site | `transport: browser` and `pacing: human` in that recipe ([Sites with bot protection](#sites-with-bot-protection)) |
-| Repeat browser actions for each item in a list | `for_each: "{{inputs.ids}}"` on a browser step |
+| Repeat browser actions for each item in a list | `for_each: "{{inputs.ids}}"` on a browser step (read-only loops run up to 8 pages at once) |
 | Move the data folder | `REPLAY_ANYTHING_HOME=<folder>` (`replay-anything where` shows the current one) |
 | See response text in errors | `REPLAY_ANYTHING_DEBUG=1` (off by default: error pages can echo tokens) |
 
